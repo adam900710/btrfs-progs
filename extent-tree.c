@@ -1528,22 +1528,68 @@ static int write_one_cache_group(struct btrfs_trans_handle *trans,
 				 struct btrfs_path *path,
 				 struct btrfs_block_group_cache *cache)
 {
+	bool is_bg_tree = btrfs_fs_incompat(trans->fs_info, BG_TREE);
 	int ret;
-	struct btrfs_root *extent_root = trans->fs_info->extent_root;
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_root *root;
 	unsigned long bi;
 	struct extent_buffer *leaf;
 
-	ret = btrfs_search_slot(trans, extent_root, &cache->key, path, 0, 1);
-	if (ret < 0)
-		goto fail;
-	BUG_ON(ret);
+	if (is_bg_tree)
+		root = fs_info->bg_root;
+	else
+		root = fs_info->extent_root;
 
-	leaf = path->nodes[0];
-	bi = btrfs_item_ptr_offset(leaf, path->slots[0]);
-	write_extent_buffer(leaf, &cache->item, bi, sizeof(cache->item));
-	btrfs_mark_buffer_dirty(leaf);
-	btrfs_release_path(path);
-fail:
+	ret = btrfs_search_slot(trans, root, &cache->key, path, 0, 1);
+	if (ret < 0)
+		goto out;
+
+	if (ret == 0) {
+		/* Update existing bg */
+		leaf = path->nodes[0];
+		bi = btrfs_item_ptr_offset(leaf, path->slots[0]);
+		write_extent_buffer(leaf, &cache->item, bi, sizeof(cache->item));
+		btrfs_mark_buffer_dirty(leaf);
+		btrfs_release_path(path);
+	} else {
+		btrfs_release_path(path);
+
+		/*
+		 * Insert new bg item
+		 *
+		 * This only happens for bg_tree feature
+		 */
+		if (!is_bg_tree) {
+			error("can't find block group item for bytenr %llu",
+			      cache->key.objectid);
+			ret = -ENOENT;
+			goto out;
+		}
+		ret = btrfs_insert_item(trans, root, &cache->key, &cache->item,
+					sizeof(cache->item));
+		if (ret < 0)
+			goto out;
+
+		/* Also delete the existing one in next tree if needed */
+		if (fs_info->convert_to_bg_tree) {
+			ret = btrfs_search_slot(trans, fs_info->extent_root,
+						&cache->key, path, -1, 1);
+			if (ret < 0) {
+				btrfs_release_path(path);
+				goto out;
+			}
+			/* Good, already converted */
+			if (ret > 0) {
+				ret = 0;
+				btrfs_release_path(path);
+				goto out;
+			}
+			/* Delete old block group item in extent tree */
+			ret = btrfs_del_item(trans, fs_info->extent_root, path);
+			btrfs_release_path(path);
+		}
+	}
+out:
 	if (ret)
 		return ret;
 	return 0;
@@ -2717,14 +2763,66 @@ static int read_one_block_group(struct btrfs_fs_info *fs_info,
 	return 0;
 }
 
+static int read_block_group_tree(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_root *root = fs_info->bg_root;
+	struct btrfs_key key = { 0 };
+	struct btrfs_path path;
+	int ret;
+
+	btrfs_init_path(&path);
+	ret = btrfs_search_slot(NULL, root, &key, &path, 0, 0);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to search block group tree: %m");
+		return ret;
+	}
+	if (ret == 0)
+		goto invalid_key;
+
+	while (1) {
+		btrfs_item_key_to_cpu(path.nodes[0], &key, path.slots[0]);
+		if (key.type != BTRFS_BLOCK_GROUP_ITEM_KEY)
+			goto invalid_key;
+
+		ret = read_one_block_group(fs_info, &path);
+		if (ret < 0) {
+			errno = -ret;
+			error("failed to read one block group: %m");
+			goto out;
+		}
+		ret = btrfs_next_item(root, &path);
+		if (ret < 0) {
+			errno = -ret;
+			error("failed to search block group tree: %m");
+			goto out;
+		}
+		if (ret > 0) {
+			ret = 0;
+			break;
+		}
+	}
+out:
+	btrfs_release_path(&path);
+	return ret;
+
+invalid_key:
+	error("invalid key (%llu, %u, %llu) found in block group tree",
+	      key.objectid, key.type, key.offset);
+	btrfs_release_path(&path);
+	return -EUCLEAN;
+}
+
 int btrfs_read_block_groups(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_path path;
-	struct btrfs_root *root;
+	struct btrfs_root *root = fs_info->extent_root;
 	int ret;
 	struct btrfs_key key;
 
-	root = fs_info->extent_root;
+	if (btrfs_fs_incompat(fs_info, BG_TREE))
+		return read_block_group_tree(fs_info);
+
 	key.objectid = 0;
 	key.offset = 0;
 	key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
@@ -2804,12 +2902,17 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
 			   u64 type, u64 chunk_offset, u64 size)
 {
 	int ret;
-	struct btrfs_root *extent_root = fs_info->extent_root;
+	struct btrfs_root *root;
 	struct btrfs_block_group_cache *cache;
+
+	if (btrfs_fs_incompat(fs_info, BG_TREE))
+		root = fs_info->bg_root;
+	else
+		root = fs_info->extent_root;
 
 	cache = btrfs_add_block_group(fs_info, bytes_used, type, chunk_offset,
 				      size);
-	ret = btrfs_insert_item(trans, extent_root, &cache->key, &cache->item,
+	ret = btrfs_insert_item(trans, root, &cache->key, &cache->item,
 				sizeof(cache->item));
 	BUG_ON(ret);
 
@@ -2943,8 +3046,16 @@ static int free_block_group_item(struct btrfs_trans_handle *trans,
 	if (!path)
 		return -ENOMEM;
 
+	/* Using bg tree only */
+	if (btrfs_fs_incompat(fs_info, BG_TREE) && !fs_info->convert_to_bg_tree)
+		goto bg_tree;
+
 	ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
 	if (ret > 0) {
+		if (btrfs_fs_incompat(fs_info, BG_TREE)) {
+			btrfs_release_path(path);
+			goto bg_tree;
+		}
 		ret = -ENOENT;
 		goto out;
 	}
@@ -2952,6 +3063,19 @@ static int free_block_group_item(struct btrfs_trans_handle *trans,
 		goto out;
 
 	ret = btrfs_del_item(trans, root, path);
+	goto out;
+
+bg_tree:
+	root = fs_info->bg_root;
+	ret = btrfs_search_slot(trans, fs_info->bg_root, &key, path, -1, 1);
+	if (ret < 0)
+		goto out;
+	if (ret > 0) {
+		ret = -ENOENT;
+		goto out;
+	}
+	ret = btrfs_del_item(trans, root, path);
+
 out:
 	btrfs_free_path(path);
 	return ret;
