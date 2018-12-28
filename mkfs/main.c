@@ -1336,6 +1336,31 @@ raid_groups:
 		goto out;
 	}
 
+	/*
+	 * Bg tree are converted after temp chunks cleaned up, or we can
+	 * populate temp chunks.
+	 */
+	if (mkfs_cfg.features & BTRFS_FEATURE_INCOMPAT_BG_TREE) {
+		trans = btrfs_start_transaction(fs_info->tree_root, 1);
+		if (IS_ERR(trans)) {
+			error("failed to start transaction: %d", ret);
+			goto out;
+		}
+		ret = btrfs_convert_to_bg_tree(trans);
+		if (ret < 0) {
+			errno = -ret;
+			error(
+		"bg-tree feature will not be enabled, due to error: %m");
+			btrfs_abort_transaction(trans, ret);
+			goto out;
+		}
+		ret = btrfs_commit_transaction(trans, fs_info->tree_root);
+		if (ret < 0) {
+			error("failed to commit transaction: %d", ret);
+			goto out;
+		}
+	}
+
 	if (source_dir_set) {
 		ret = btrfs_mkfs_fill_dir(source_dir, root, verbose);
 		if (ret) {

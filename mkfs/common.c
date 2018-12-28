@@ -112,6 +112,9 @@ static int btrfs_create_tree_root(int fd, struct btrfs_mkfs_config *cfg,
 	return ret;
 }
 
+/* These features will not be set in the temporary fs */
+#define MASKED_FEATURES		(~(BTRFS_FEATURE_INCOMPAT_BG_TREE))
+
 /*
  * @fs_uuid - if NULL, generates a UUID, returns back the new filesystem UUID
  *
@@ -205,7 +208,7 @@ int make_btrfs(int fd, struct btrfs_mkfs_config *cfg)
 	btrfs_set_super_csum_type(&super, cfg->csum_type);
 	btrfs_set_super_chunk_root_generation(&super, 1);
 	btrfs_set_super_cache_generation(&super, -1);
-	btrfs_set_super_incompat_flags(&super, cfg->features);
+	btrfs_set_super_incompat_flags(&super, cfg->features & MASKED_FEATURES);
 	if (cfg->label)
 		__strncpy_null(super.label, cfg->label, BTRFS_LABEL_SIZE - 1);
 
@@ -830,5 +833,4 @@ int test_minimum_size(const char *file, u64 min_dev_size)
 	close(fd);
 	return 0;
 }
-
 

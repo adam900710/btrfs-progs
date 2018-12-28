@@ -1524,6 +1524,45 @@ int btrfs_dec_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	return __btrfs_mod_ref(trans, root, buf, record_parent, 0);
 }
 
+int btrfs_convert_to_bg_tree(struct btrfs_trans_handle *trans)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_block_group_cache *bg;
+	struct btrfs_root *bg_root;
+	u64 features = btrfs_super_incompat_flags(fs_info->super_copy);
+	int ret;
+
+	/* create bg tree first */
+	bg_root = btrfs_create_tree(trans, fs_info, BTRFS_BLOCK_GROUP_TREE_OBJECTID);
+	if (IS_ERR(bg_root)) {
+		ret = PTR_ERR(bg_root);
+		errno = -ret;
+		error("failed to create bg tree: %m");
+		return ret;
+	}
+	fs_info->bg_root = bg_root;
+	fs_info->bg_root->track_dirty = 1;
+	fs_info->bg_root->ref_cows = 0;
+	add_root_to_dirty_list(bg_root);
+
+	/* set BG_TREE feature and mark the fs into bg_tree convert status */
+	btrfs_set_super_incompat_flags(fs_info->super_copy,
+			features | BTRFS_FEATURE_INCOMPAT_BG_TREE);
+	fs_info->convert_to_bg_tree = 1;
+
+	/*
+	 * Mark all block groups dirty so they will get converted to bg tree at
+	 * commit transaction time
+	 */
+	for (bg = btrfs_lookup_first_block_group(fs_info, 0); bg;
+	     bg = btrfs_lookup_first_block_group(fs_info,
+				bg->key.objectid + bg->key.offset))
+		set_extent_bits(&fs_info->block_group_cache, bg->key.objectid,
+				bg->key.objectid + bg->key.offset - 1,
+				BLOCK_GROUP_DIRTY);
+	return 0;
+}
+
 static int write_one_cache_group(struct btrfs_trans_handle *trans,
 				 struct btrfs_path *path,
 				 struct btrfs_block_group_cache *cache)
