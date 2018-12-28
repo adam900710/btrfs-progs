@@ -775,6 +775,9 @@ void print_objectid(FILE *stream, u64 objectid, u8 type)
 	case BTRFS_FREE_SPACE_TREE_OBJECTID:
 		fprintf(stream, "FREE_SPACE_TREE");
 		break;
+	case BTRFS_BLOCK_GROUP_TREE_OBJECTID:
+		fprintf(stream, "BLOCK_GROUP_TREE");
+		break;
 	case BTRFS_MULTIPLE_OBJECTIDS:
 		fprintf(stream, "MULTIPLE");
 		break;
