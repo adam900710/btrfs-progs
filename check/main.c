@@ -6050,7 +6050,8 @@ static int check_type_with_root(u64 rootid, u8 key_type)
 	case BTRFS_EXTENT_ITEM_KEY:
 	case BTRFS_METADATA_ITEM_KEY:
 	case BTRFS_BLOCK_GROUP_ITEM_KEY:
-		if (rootid != BTRFS_EXTENT_TREE_OBJECTID)
+		if (rootid != BTRFS_EXTENT_TREE_OBJECTID &&
+		    rootid != BTRFS_BLOCK_GROUP_TREE_OBJECTID)
 			goto err;
 		break;
 	case BTRFS_ROOT_ITEM_KEY:

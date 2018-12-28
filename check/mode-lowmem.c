@@ -4365,7 +4365,7 @@ next:
 static int check_chunk_item(struct btrfs_fs_info *fs_info,
 			    struct extent_buffer *eb, int slot)
 {
-	struct btrfs_root *extent_root = fs_info->extent_root;
+	struct btrfs_root *root;
 	struct btrfs_root *dev_root = fs_info->dev_root;
 	struct btrfs_path path;
 	struct btrfs_key chunk_key;
@@ -4387,6 +4387,11 @@ static int check_chunk_item(struct btrfs_fs_info *fs_info,
 	int ret;
 	int err = 0;
 
+	if (btrfs_fs_incompat(fs_info, BG_TREE))
+		root = fs_info->bg_root;
+	else
+		root = fs_info->extent_root;
+
 	btrfs_item_key_to_cpu(eb, &chunk_key, slot);
 	chunk = btrfs_item_ptr(eb, slot, struct btrfs_chunk);
 	length = btrfs_chunk_length(eb, chunk);
@@ -4406,7 +4411,7 @@ static int check_chunk_item(struct btrfs_fs_info *fs_info,
 	bg_key.offset = length;
 
 	btrfs_init_path(&path);
-	ret = btrfs_search_slot(NULL, extent_root, &bg_key, &path, 0, 0);
+	ret = btrfs_search_slot(NULL, root, &bg_key, &path, 0, 0);
 	if (ret) {
 		error(
 		"chunk[%llu %llu) did not find the related block group item",
