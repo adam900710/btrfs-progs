@@ -38,7 +38,7 @@ struct dump_version {
 	unsigned int extra_sb_flags:1;
 };
 
-#define NR_DUMP_VERSIONS	1
+#define NR_DUMP_VERSIONS	2
 extern const struct dump_version dump_versions[NR_DUMP_VERSIONS];
 const extern struct dump_version *current_version;
 
