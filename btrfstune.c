@@ -476,9 +476,37 @@ static void print_usage(void)
 	printf("\t-m          change fsid in metadata_uuid to a random UUID\n");
 	printf("\t            (incompat change, more lightweight than -u|-U)\n");
 	printf("\t-M UUID     change fsid in metadata_uuid to UUID\n");
+	printf("\t-b          enable bg-tree feature (mkfs: bg-tree, for faster mount time)\n");
 	printf("  general:\n");
 	printf("\t-f          allow dangerous operations, make sure that you are aware of the dangers\n");
 	printf("\t--help      print this help\n");
+}
+
+static int convert_to_bg_tree(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_trans_handle *trans;
+	int ret;
+
+	trans = btrfs_start_transaction(fs_info->tree_root, 1);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		errno = -ret;
+		error("failed to start transaction: %m");
+		return ret;
+	}
+	ret = btrfs_convert_to_bg_tree(trans);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to convert: %m");
+		btrfs_abort_transaction(trans, ret);
+		return ret;
+	}
+	ret = btrfs_commit_transaction(trans, fs_info->tree_root);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to commit transaction: %m");
+	}
+	return ret;
 }
 
 int BOX_MAIN(btrfstune)(int argc, char *argv[])
@@ -491,6 +519,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 	u64 seeding_value = 0;
 	int random_fsid = 0;
 	int change_metadata_uuid = 0;
+	bool to_bg_tree = false;
 	char *new_fsid_str = NULL;
 	int ret;
 	u64 super_flags = 0;
@@ -501,7 +530,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 			{ "help", no_argument, NULL, GETOPT_VAL_HELP},
 			{ NULL, 0, NULL, 0 }
 		};
-		int c = getopt_long(argc, argv, "S:rxfuU:nmM:", long_options, NULL);
+		int c = getopt_long(argc, argv, "S:rxfuU:nmM:b", long_options, NULL);
 
 		if (c < 0)
 			break;
@@ -539,6 +568,9 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 			ctree_flags |= OPEN_CTREE_IGNORE_FSID_MISMATCH;
 			change_metadata_uuid = 1;
 			break;
+		case 'b':
+			to_bg_tree = true;
+			break;
 		case GETOPT_VAL_HELP:
 		default:
 			print_usage();
@@ -556,7 +588,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		return 1;
 	}
 	if (!super_flags && !seeding_flag && !(random_fsid || new_fsid_str) &&
-	    !change_metadata_uuid) {
+	    !change_metadata_uuid && !to_bg_tree) {
 		error("at least one option should be specified");
 		print_usage();
 		return 1;
@@ -602,6 +634,14 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		return 1;
 	}
 
+	if (to_bg_tree) {
+		ret = convert_to_bg_tree(root->fs_info);
+		if (ret < 0) {
+			errno = -ret;
+			error("failed to convert to bg-tree feature: %m");
+			goto out;
+		}
+	}
 	if (seeding_flag) {
 		if (btrfs_fs_incompat(root->fs_info, METADATA_UUID)) {
 			fprintf(stderr, "SEED flag cannot be changed on a metadata-uuid changed fs\n");
