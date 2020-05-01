@@ -91,6 +91,9 @@ struct btrfs_free_space_ctl;
 /* tracks free space in block groups. */
 #define BTRFS_FREE_SPACE_TREE_OBJECTID 10ULL
 
+/* store SKINNY_BLOCK_GROUP_ITEMs in a seperate tree */
+#define BTRFS_BLOCK_GROUP_TREE_OBJECTID 11ULL
+
 /* device stats in the device tree */
 #define BTRFS_DEV_STATS_OBJECTID 0ULL
 
@@ -495,6 +498,7 @@ struct btrfs_super_block {
 #define BTRFS_FEATURE_INCOMPAT_NO_HOLES		(1ULL << 9)
 #define BTRFS_FEATURE_INCOMPAT_METADATA_UUID    (1ULL << 10)
 #define BTRFS_FEATURE_INCOMPAT_RAID1C34		(1ULL << 11)
+#define BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE	(1ULL << 12)
 
 #define BTRFS_FEATURE_COMPAT_SUPP		0ULL
 
@@ -519,7 +523,8 @@ struct btrfs_super_block {
 	 BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA |	\
 	 BTRFS_FEATURE_INCOMPAT_NO_HOLES |		\
 	 BTRFS_FEATURE_INCOMPAT_RAID1C34 |		\
-	 BTRFS_FEATURE_INCOMPAT_METADATA_UUID)
+	 BTRFS_FEATURE_INCOMPAT_METADATA_UUID |		\
+	 BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE)
 
 /*
  * A leaf is full of items. offset and size tell us where to find
@@ -1147,6 +1152,7 @@ struct btrfs_fs_info {
 	struct btrfs_root *quota_root;
 	struct btrfs_root *free_space_root;
 	struct btrfs_root *uuid_root;
+	struct btrfs_root *bg_root;
 
 	struct rb_root fs_root_tree;
 
@@ -1354,6 +1360,13 @@ static inline u32 BTRFS_MAX_XATTR_SIZE(const struct btrfs_fs_info *info)
  * blocks are free etc etc
  */
 #define BTRFS_BLOCK_GROUP_ITEM_KEY 192
+
+/*
+ * More optimized block group item, use key.objectid for block group bytenr,
+ * key.offset for used bytes.
+ * No item data needed.
+ */
+#define BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY 193
 
 /*
  * Every block group is represented in the free space tree by a free space info

@@ -1527,6 +1527,36 @@ int btrfs_dec_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	return __btrfs_mod_ref(trans, root, buf, record_parent, 0);
 }
 
+static int locate_skinny_bg_item(struct btrfs_fs_info *fs_info,
+				 struct btrfs_trans_handle *trans,
+				 struct btrfs_block_group *bg,
+				 struct btrfs_path *path,
+				 int ins_len, int cow)
+{
+	struct btrfs_root *bg_root = fs_info->bg_root;
+	struct btrfs_key key;
+	int ret;
+
+	key.objectid = bg->start;
+	key.type = BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY;
+	key.offset = (u64)-1;
+
+	ret = btrfs_search_slot(trans, bg_root, &key, path, ins_len, cow);
+	if (ret == 0)
+		ret = -EUCLEAN;
+	if (ret < 0)
+		goto error;
+	ret = btrfs_previous_item(bg_root, path, key.objectid, key.type);
+	if (ret > 0)
+		ret = -ENOENT;
+	if (ret < 0)
+		goto error;
+	return ret;
+error:
+	btrfs_release_path(path);
+	return ret;
+}
+
 static int update_block_group_item(struct btrfs_trans_handle *trans,
 				   struct btrfs_path *path,
 				   struct btrfs_block_group *cache)
@@ -1539,6 +1569,14 @@ static int update_block_group_item(struct btrfs_trans_handle *trans,
 	unsigned long bi;
 	int ret;
 
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		ret = locate_skinny_bg_item(fs_info, trans, cache, path, 0, 1);
+		if (ret < 0)
+			goto fail;
+		key.offset = cache->used;
+		btrfs_set_item_key_safe(fs_info->bg_root, path, &key);
+		return 0;
+	}
 	key.objectid = cache->start;
 	key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
 	key.offset = cache->length;
@@ -2637,8 +2675,32 @@ static int read_block_group_item(struct btrfs_block_group *cache,
 				 const struct btrfs_key *key)
 {
 	struct extent_buffer *leaf = path->nodes[0];
+	struct btrfs_fs_info *fs_info = leaf->fs_info;
 	struct btrfs_block_group_item bgi;
 	int slot = path->slots[0];
+
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		struct cache_extent *ce;
+		struct map_lookup *map;
+
+		ASSERT(key->type == BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY);
+		ce = search_cache_extent(&fs_info->mapping_tree.cache_tree,
+					 key->objectid);
+		if (!ce || ce->start != key->objectid)
+			return -ENOENT;
+		map = container_of(ce, struct map_lookup, ce);
+		cache->start = key->objectid;
+		cache->length = ce->size;
+		cache->used = key->offset;
+		cache->flags = map->type;
+		if (cache->used > cache->length) {
+			error(
+	"invalid used bytes for block group %llu, have %llu expect [0, %llu]",
+			      cache->start, cache->used, ce->size);
+			return -EUCLEAN;
+		}
+		return 0;
+	}
 
 	ASSERT(key->type == BTRFS_BLOCK_GROUP_ITEM_KEY);
 
@@ -2670,14 +2732,10 @@ static int read_one_block_group(struct btrfs_fs_info *fs_info,
 	int ret;
 
 	btrfs_item_key_to_cpu(leaf, &key, slot);
-	ASSERT(key.type == BTRFS_BLOCK_GROUP_ITEM_KEY);
-
-	/*
-	 * Skip 0 sized block group, don't insert them into block group cache
-	 * tree, as its length is 0, it won't get freed at close_ctree() time.
-	 */
-	if (key.offset == 0)
-		return 0;
+	ASSERT((!btrfs_fs_incompat(fs_info, SKINNY_BG_TREE) &&
+				key.type == BTRFS_BLOCK_GROUP_ITEM_KEY) ||
+	       (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE) &&
+				key.type == BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY));
 
 	cache = kzalloc(sizeof(*cache), GFP_NOFS);
 	if (!cache)
@@ -2687,6 +2745,16 @@ static int read_one_block_group(struct btrfs_fs_info *fs_info,
 		free(cache);
 		return ret;
 	}
+
+	/*
+	 * Skip 0 sized block group, don't insert them into block group cache
+	 * tree, as its length is 0, it won't get freed at close_ctree() time.
+	 */
+	if (cache->length == 0) {
+		free(cache);
+		return 0;
+	}
+
 	INIT_LIST_HEAD(&cache->dirty_list);
 
 	set_avail_alloc_bits(fs_info, cache->flags);
@@ -2711,12 +2779,62 @@ static int read_one_block_group(struct btrfs_fs_info *fs_info,
 	return 0;
 }
 
+static int read_skinny_block_groups(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_root *root = fs_info->bg_root;
+	struct btrfs_path path;
+	struct btrfs_key key;
+	int ret;
+
+	key.objectid = 0;
+	key.type = 0;
+	key.offset = 0;
+	btrfs_init_path(&path);
+
+	ret = btrfs_search_slot(NULL, root, &key, &path, 0, 0);
+	if (ret < 0)
+		return ret;
+	if (ret == 0) {
+		error("found invalid key (0, 0, 0) in block group tree");
+		ret = -EUCLEAN;
+		goto out;
+	}
+	while (1) {
+		btrfs_item_key_to_cpu(path.nodes[0], &key, path.slots[0]);
+		if (key.type != BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY) {
+			error(
+		"found invalid key(%llu, %u, %llu) in block group tree",
+				key.objectid, key.type, key.offset);
+			ret = -EUCLEAN;
+			goto out;
+		}
+
+		ret = read_one_block_group(fs_info, &path);
+		if (ret < 0)
+			goto out;
+
+		ret = btrfs_next_item(root, &path);
+		if (ret < 0)
+			goto out;
+		if (ret > 0) {
+			ret = 0;
+			goto out;
+		}
+	}
+out:
+	btrfs_release_path(&path);
+	return ret;
+}
+
 int btrfs_read_block_groups(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_path path;
 	struct btrfs_root *root;
 	int ret;
 	struct btrfs_key key;
+
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE))
+		return read_skinny_block_groups(fs_info);
 
 	root = fs_info->extent_root;
 	key.objectid = 0;
@@ -2813,6 +2931,14 @@ static int insert_block_group_item(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root;
 	struct btrfs_key key;
 
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		key.objectid = block_group->start;
+		key.type = BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY;
+		key.offset = block_group->used;
+		root = fs_info->bg_root;
+
+		return btrfs_insert_item(trans, root, &key, NULL, 0);
+	}
 	btrfs_set_stack_block_group_used(&bgi, block_group->used);
 	btrfs_set_stack_block_group_chunk_objectid(&bgi,
 				BTRFS_FIRST_CHUNK_TREE_OBJECTID);
@@ -2921,13 +3047,36 @@ static int remove_block_group_item(struct btrfs_trans_handle *trans,
 				   struct btrfs_block_group *block_group)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
-	struct btrfs_root *root = fs_info->extent_root;
+	struct btrfs_root *root;
 	struct btrfs_key key;
 	int ret = 0;
 
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		key.objectid = block_group->start;
+		key.type = BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY;
+		key.offset = (u64)-1;
+		root = fs_info->bg_root;
+
+		ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
+		if (ret == 0) {
+			btrfs_release_path(path);
+			ret = -EUCLEAN;
+		}
+		if (ret < 0)
+			return ret;
+
+		ret = btrfs_previous_item(root, path, key.objectid, key.type);
+		if (ret > 0)
+			ret = -ENOENT;
+		if (ret < 0)
+			return ret;
+		ret = btrfs_del_item(trans, root, path);
+		return ret;
+	}
 	key.objectid = block_group->start;
 	key.offset = block_group->length;
 	key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
+	root = fs_info->extent_root;
 
 	ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
 	if (ret > 0)
