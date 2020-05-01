@@ -5455,7 +5455,7 @@ static int check_cache_range(struct btrfs_root *root,
 	for (i = 0; i < BTRFS_SUPER_MIRROR_MAX; i++) {
 		bytenr = btrfs_sb_offset(i);
 		ret = btrfs_rmap_block(root->fs_info,
-				       cache->key.objectid, bytenr,
+				       cache->start, bytenr,
 				       &logical, &nr, &stripe_len);
 		if (ret)
 			return ret;
@@ -5547,7 +5547,7 @@ static int verify_space_cache(struct btrfs_root *root,
 
 	root = root->fs_info->extent_root;
 
-	last = max_t(u64, cache->key.objectid, BTRFS_SUPER_INFO_OFFSET);
+	last = max_t(u64, cache->start, BTRFS_SUPER_INFO_OFFSET);
 
 	btrfs_init_path(&path);
 	key.objectid = last;
@@ -5569,7 +5569,7 @@ static int verify_space_cache(struct btrfs_root *root,
 		}
 		leaf = path.nodes[0];
 		btrfs_item_key_to_cpu(leaf, &key, path.slots[0]);
-		if (key.objectid >= cache->key.offset + cache->key.objectid)
+		if (key.objectid >= cache->start + cache->length)
 			break;
 		if (key.type != BTRFS_EXTENT_ITEM_KEY &&
 		    key.type != BTRFS_METADATA_ITEM_KEY) {
@@ -5597,10 +5597,9 @@ static int verify_space_cache(struct btrfs_root *root,
 		path.slots[0]++;
 	}
 
-	if (last < cache->key.objectid + cache->key.offset)
+	if (last < cache->start + cache->length)
 		ret = check_cache_range(root, cache, last,
-					cache->key.objectid +
-					cache->key.offset - last);
+					cache->start + cache->length - last);
 
 out:
 	btrfs_release_path(&path);
@@ -5628,7 +5627,7 @@ static int check_space_cache(struct btrfs_root *root)
 		if (!cache)
 			break;
 
-		start = cache->key.objectid + cache->key.offset;
+		start = cache->start + cache->length;
 		if (!cache->free_space_ctl) {
 			if (btrfs_init_free_space_ctl(cache,
 						root->fs_info->sectorsize)) {
@@ -5669,7 +5668,7 @@ static int check_space_cache(struct btrfs_root *root)
 		ret = verify_space_cache(root, cache);
 		if (ret) {
 			fprintf(stderr, "cache appears valid but isn't %llu\n",
-				cache->key.objectid);
+				cache->start);
 			error++;
 		}
 	}
@@ -8970,7 +8969,7 @@ static int reset_block_groups(struct btrfs_fs_info *fs_info)
 		if (!cache)
 			break;
 		cache->cached = 1;
-		start = cache->key.objectid + cache->key.offset;
+		start = cache->start + cache->length;
 	}
 
 	btrfs_release_path(&path);
@@ -9156,17 +9155,21 @@ again:
 	while (1) {
 		struct btrfs_block_group_item bgi;
 		struct btrfs_block_group_cache *cache;
+		struct btrfs_key key;
 
 		cache = btrfs_lookup_first_block_group(fs_info, start);
 		if (!cache)
 			break;
-		start = cache->key.objectid + cache->key.offset;
+		start = cache->start + cache->length;
 		btrfs_set_stack_block_group_used(&bgi, cache->used);
 		btrfs_set_stack_block_group_chunk_objectid(&bgi,
 					BTRFS_FIRST_CHUNK_TREE_OBJECTID);
 		btrfs_set_stack_block_group_flags(&bgi, cache->flags);
-		ret = btrfs_insert_item(trans, fs_info->extent_root,
-					&cache->key, &bgi, sizeof(bgi));
+		key.objectid = cache->start;
+		key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
+		key.offset = cache->length;
+		ret = btrfs_insert_item(trans, fs_info->extent_root, &key,
+					&bgi, sizeof(bgi));
 		if (ret) {
 			fprintf(stderr, "Error adding block group\n");
 			return ret;
@@ -9815,7 +9818,7 @@ static int clear_free_space_cache(struct btrfs_fs_info *fs_info)
 		ret = btrfs_clear_free_space_cache(fs_info, bg_cache);
 		if (ret < 0)
 			return ret;
-		current = bg_cache->key.objectid + bg_cache->key.offset;
+		current = bg_cache->start + bg_cache->length;
 	}
 
 	/* Don't forget to set cache_generation to -1 */
