@@ -476,6 +476,8 @@ static void print_usage(void)
 	printf("\t-m          change fsid in metadata_uuid to a random UUID\n");
 	printf("\t            (incompat change, more lightweight than -u|-U)\n");
 	printf("\t-M UUID     change fsid in metadata_uuid to UUID\n");
+	printf("\t-b          enable skinny-bg-tree feature (mkfs: skinny-bg-tree)");
+	printf("\t            for faster mount time\n");
 	printf("  general:\n");
 	printf("\t-f          allow dangerous operations, make sure that you are aware of the dangers\n");
 	printf("\t--help      print this help\n");
@@ -485,6 +487,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 {
 	struct btrfs_root *root;
 	unsigned ctree_flags = OPEN_CTREE_WRITES;
+	bool to_skinny_bg_tree = false;
 	int success = 0;
 	int total = 0;
 	int seeding_flag = 0;
@@ -501,7 +504,8 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 			{ "help", no_argument, NULL, GETOPT_VAL_HELP},
 			{ NULL, 0, NULL, 0 }
 		};
-		int c = getopt_long(argc, argv, "S:rxfuU:nmM:", long_options, NULL);
+		int c = getopt_long(argc, argv, "S:rxfuU:nmM:b", long_options,
+				    NULL);
 
 		if (c < 0)
 			break;
@@ -539,6 +543,9 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 			ctree_flags |= OPEN_CTREE_IGNORE_FSID_MISMATCH;
 			change_metadata_uuid = 1;
 			break;
+		case 'b':
+			to_skinny_bg_tree = true;
+			break;
 		case GETOPT_VAL_HELP:
 		default:
 			print_usage();
@@ -556,7 +563,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		return 1;
 	}
 	if (!super_flags && !seeding_flag && !(random_fsid || new_fsid_str) &&
-	    !change_metadata_uuid) {
+	    !change_metadata_uuid && !to_skinny_bg_tree) {
 		error("at least one option should be specified");
 		print_usage();
 		return 1;
@@ -602,6 +609,14 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		return 1;
 	}
 
+	if (to_skinny_bg_tree) {
+		ret = btrfs_convert_to_skinny_bg_tree(root->fs_info);
+		if (ret < 0) {
+			errno = -ret;
+			error("failed to convert to bg-tree feature: %m");
+			goto out;
+		}
+	}
 	if (seeding_flag) {
 		if (btrfs_fs_incompat(root->fs_info, METADATA_UUID)) {
 			fprintf(stderr, "SEED flag cannot be changed on a metadata-uuid changed fs\n");
