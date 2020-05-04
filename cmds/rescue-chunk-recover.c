@@ -226,12 +226,15 @@ static int process_block_group_item(struct block_group_tree *bg_cache,
 				    struct extent_buffer *leaf,
 				    struct btrfs_key *key, int slot)
 {
+	struct btrfs_block_group_item *bgi;
 	struct block_group_record *rec;
 	struct block_group_record *exist;
 	struct cache_extent *cache;
 	int ret = 0;
 
-	rec = btrfs_new_block_group_record(leaf, key, slot);
+	bgi = btrfs_item_ptr(leaf, slot, struct btrfs_block_group_item);
+	rec = btrfs_new_block_group_record(leaf, key->objectid, key->offset,
+				btrfs_block_group_flags(leaf, bgi));
 	if (!rec->cache.size)
 		goto free_out;
 again:

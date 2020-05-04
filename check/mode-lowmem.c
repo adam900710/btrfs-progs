@@ -3553,16 +3553,39 @@ static int check_block_group_item(struct btrfs_fs_info *fs_info,
 	u32 nodesize = btrfs_super_nodesize(fs_info->super_copy);
 	u64 flags;
 	u64 bg_flags;
+	u64 bg_len;
 	u64 used;
 	u64 total = 0;
 	int ret;
 	int err = 0;
 
 	btrfs_item_key_to_cpu(eb, &bg_key, slot);
-	bi = btrfs_item_ptr(eb, slot, struct btrfs_block_group_item);
-	read_extent_buffer(eb, &bg_item, (unsigned long)bi, sizeof(bg_item));
-	used = btrfs_stack_block_group_used(&bg_item);
-	bg_flags = btrfs_stack_block_group_flags(&bg_item);
+	if (bg_key.type == BTRFS_BLOCK_GROUP_ITEM_KEY) {
+		bi = btrfs_item_ptr(eb, slot, struct btrfs_block_group_item);
+		read_extent_buffer(eb, &bg_item, (unsigned long)bi, sizeof(bg_item));
+		used = btrfs_stack_block_group_used(&bg_item);
+		bg_flags = btrfs_stack_block_group_flags(&bg_item);
+		bg_len = bg_key.offset;
+	} else {
+		struct btrfs_mapping_tree *map_tree = &fs_info->mapping_tree;
+		struct cache_extent *ce;
+		struct map_lookup *map;
+
+		ce = search_cache_extent(&map_tree->cache_tree,
+					 bg_key.objectid);
+		if (!ce || ce->start != bg_key.objectid) {
+			error(
+		"block group[%llu] did not find the related chunk item",
+				bg_key.objectid);
+			err |= REFERENCER_MISSING;
+			return err;
+		} else {
+			map = container_of(ce, struct map_lookup, ce);
+			bg_flags = map->type;
+		}
+		used = bg_key.offset;
+		bg_len = ce->size;
+	}
 
 	chunk_key.objectid = BTRFS_FIRST_CHUNK_TREE_OBJECTID;
 	chunk_key.type = BTRFS_CHUNK_ITEM_KEY;
@@ -3574,16 +3597,15 @@ static int check_block_group_item(struct btrfs_fs_info *fs_info,
 	if (ret) {
 		error(
 		"block group[%llu %llu] did not find the related chunk item",
-			bg_key.objectid, bg_key.offset);
+			bg_key.objectid, bg_len);
 		err |= REFERENCER_MISSING;
 	} else {
 		chunk = btrfs_item_ptr(path.nodes[0], path.slots[0],
 					struct btrfs_chunk);
-		if (btrfs_chunk_length(path.nodes[0], chunk) !=
-						bg_key.offset) {
+		if (btrfs_chunk_length(path.nodes[0], chunk) != bg_len) {
 			error(
 	"block group[%llu %llu] related chunk item length does not match",
-				bg_key.objectid, bg_key.offset);
+				bg_key.objectid, bg_len);
 			err |= REFERENCER_MISMATCH;
 		}
 	}
@@ -3608,7 +3630,7 @@ static int check_block_group_item(struct btrfs_fs_info *fs_info,
 			goto next;
 
 		btrfs_item_key_to_cpu(leaf, &extent_key, path.slots[0]);
-		if (extent_key.objectid >= bg_key.objectid + bg_key.offset)
+		if (extent_key.objectid >= bg_key.objectid + bg_len)
 			break;
 
 		if (extent_key.type != BTRFS_METADATA_ITEM_KEY &&
@@ -3655,7 +3677,7 @@ out:
 	if (total != used) {
 		error(
 		"block group[%llu %llu] used %llu but extent items used %llu",
-			bg_key.objectid, bg_key.offset, used, total);
+			bg_key.objectid, bg_len, used, total);
 		err |= BG_ACCOUNTING_ERROR;
 	}
 	return err;
@@ -4514,6 +4536,29 @@ static int find_block_group_item(struct btrfs_fs_info *fs_info,
 	struct btrfs_key key;
 	int ret;
 
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		key.objectid = bytenr;
+		key.type = BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY;
+		key.offset = (u64)-1;
+
+		ret = btrfs_search_slot(NULL, fs_info->bg_root, &key, path, 0, 0);
+		if (ret < 0)
+			return ret;
+		if (ret == 0) {
+			ret = -EUCLEAN;
+			error("invalid skinny bg item found for chunk [%llu, %llu)",
+				bytenr, bytenr + len);
+			goto out;
+		}
+		ret = btrfs_previous_item(fs_info->bg_root, path, bytenr,
+					  BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY);
+		if (ret > 0) {
+			ret = -ENOENT;
+			error("can't find skinny bg item for chunk [%llu, %llu)",
+				bytenr, bytenr + len);
+		}
+		goto out;
+	}
 	key.objectid = bytenr;
 	key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
 	key.offset = len;
@@ -4722,6 +4767,7 @@ again:
 		err |= ret;
 		break;
 	case BTRFS_BLOCK_GROUP_ITEM_KEY:
+	case BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY:
 		ret = check_block_group_item(fs_info, eb, slot);
 		if (repair &&
 		    ret & REFERENCER_MISSING)

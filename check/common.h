@@ -166,8 +166,8 @@ struct chunk_record *btrfs_new_chunk_record(struct extent_buffer *leaf,
 					    struct btrfs_key *key,
 					    int slot);
 struct block_group_record *
-btrfs_new_block_group_record(struct extent_buffer *leaf, struct btrfs_key *key,
-			     int slot);
+btrfs_new_block_group_record(struct extent_buffer *leaf, u64 start, u64 length,
+			     u64 flags);
 struct device_extent_record *
 btrfs_new_device_extent_record(struct extent_buffer *leaf,
 			       struct btrfs_key *key, int slot);

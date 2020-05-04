@@ -5210,10 +5210,9 @@ static int process_device_item(struct rb_root *dev_cache,
 }
 
 struct block_group_record *
-btrfs_new_block_group_record(struct extent_buffer *leaf, struct btrfs_key *key,
-			     int slot)
+btrfs_new_block_group_record(struct extent_buffer *leaf, u64 start, u64 length,
+			     u64 flags)
 {
-	struct btrfs_block_group_item *ptr;
 	struct block_group_record *rec;
 
 	rec = calloc(1, sizeof(*rec));
@@ -5222,17 +5221,16 @@ btrfs_new_block_group_record(struct extent_buffer *leaf, struct btrfs_key *key,
 		exit(-1);
 	}
 
-	rec->cache.start = key->objectid;
-	rec->cache.size = key->offset;
+	rec->cache.start = start;
+	rec->cache.size = length;
 
 	rec->generation = btrfs_header_generation(leaf);
 
-	rec->objectid = key->objectid;
-	rec->type = key->type;
-	rec->offset = key->offset;
+	rec->objectid = start;
+	rec->type = BTRFS_BLOCK_GROUP_ITEM_KEY;
+	rec->offset = length;
 
-	ptr = btrfs_item_ptr(leaf, slot, struct btrfs_block_group_item);
-	rec->flags = btrfs_block_group_flags(leaf, ptr);
+	rec->flags = flags;
 
 	INIT_LIST_HEAD(&rec->list);
 
@@ -5243,10 +5241,13 @@ static int process_block_group_item(struct block_group_tree *block_group_cache,
 				    struct btrfs_key *key,
 				    struct extent_buffer *eb, int slot)
 {
+	struct btrfs_block_group_item *bgi;
 	struct block_group_record *rec;
 	int ret = 0;
 
-	rec = btrfs_new_block_group_record(eb, key, slot);
+	bgi = btrfs_item_ptr(eb, slot, struct btrfs_block_group_item);
+	rec = btrfs_new_block_group_record(eb, key->objectid, key->offset,
+				btrfs_block_group_flags(eb, bgi));
 	ret = insert_block_group_record(block_group_cache, rec);
 	if (ret) {
 		fprintf(stderr, "Block Group[%llu, %llu] existed.\n",
@@ -5254,6 +5255,32 @@ static int process_block_group_item(struct block_group_tree *block_group_cache,
 		free(rec);
 	}
 
+	return ret;
+}
+
+static int process_skinny_bgi(struct block_group_tree *block_group_cache,
+			      struct btrfs_key *key, struct extent_buffer *eb)
+{
+	struct btrfs_mapping_tree *map_tree = &global_info->mapping_tree;
+	struct block_group_record *rec;
+	struct cache_extent *ce;
+	struct map_lookup *map;
+	int ret;
+
+	ce = search_cache_extent(&map_tree->cache_tree, key->objectid);
+	/* For mismatch case, we just skip this bgi */
+	if (ce->start != key->objectid)
+		return 0;
+
+	map = container_of(ce, struct map_lookup, ce);
+	rec = btrfs_new_block_group_record(eb, key->objectid, ce->size,
+					   map->type);
+	ret = insert_block_group_record(block_group_cache, rec);
+	if (ret) {
+		error("block group [%llu, %llu) existed.",
+			ce->start, ce->start + ce->size);
+		free(rec);
+	}
 	return ret;
 }
 
@@ -6124,6 +6151,10 @@ static int check_type_with_root(u64 rootid, u8 key_type)
 		if (rootid != BTRFS_EXTENT_TREE_OBJECTID)
 			goto err;
 		break;
+	case BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY:
+		if (rootid != BTRFS_BLOCK_GROUP_TREE_OBJECTID)
+			goto err;
+		break;
 	case BTRFS_ROOT_ITEM_KEY:
 		if (rootid != BTRFS_ROOT_TREE_OBJECTID)
 			goto err;
@@ -6328,6 +6359,13 @@ static int run_next_block(struct btrfs_root *root,
 			if (key.type == BTRFS_BLOCK_GROUP_ITEM_KEY) {
 				process_block_group_item(block_group_cache,
 					&key, buf, i);
+				continue;
+			}
+			if (key.type == BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY) {
+				ret = process_skinny_bgi(block_group_cache,
+							 &key, buf);
+				if (ret < 0)
+					goto out;
 				continue;
 			}
 			if (key.type == BTRFS_DEV_EXTENT_KEY) {
