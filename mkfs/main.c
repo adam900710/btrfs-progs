@@ -1332,6 +1332,17 @@ raid_groups:
 		goto out;
 	}
 
+	/* Handle post-mkfs features */
+	if (mkfs_cfg.features & POST_MKFS_FEATURES) {
+		if (mkfs_cfg.features & BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE) {
+			ret = btrfs_convert_to_skinny_bg_tree(fs_info);
+			if (ret < 0) {
+				error("failed to convert to skinny bg tree");
+				goto out;
+			}
+		}
+	}
+
 	if (source_dir_set) {
 		ret = btrfs_mkfs_fill_dir(source_dir, root, verbose);
 		if (ret) {

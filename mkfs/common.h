@@ -28,6 +28,9 @@
 #define BTRFS_MKFS_SYSTEM_GROUP_SIZE SZ_4M
 #define BTRFS_MKFS_SMALL_VOLUME_SIZE SZ_1G
 
+/* These features are handled after major mkfs work */
+#define POST_MKFS_FEATURES	(BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE)
+
 /*
  * Tree root blocks created during mkfs
  */

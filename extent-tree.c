@@ -1557,6 +1557,11 @@ error:
 	return ret;
 }
 
+static int remove_block_group_item(struct btrfs_trans_handle *trans,
+				   struct btrfs_path *path,
+				   struct btrfs_block_group *block_group);
+static int insert_block_group_item(struct btrfs_trans_handle *trans,
+				   struct btrfs_block_group *block_group);
 static int update_block_group_item(struct btrfs_trans_handle *trans,
 				   struct btrfs_path *path,
 				   struct btrfs_block_group *cache)
@@ -1570,6 +1575,21 @@ static int update_block_group_item(struct btrfs_trans_handle *trans,
 	int ret;
 
 	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		if (fs_info->convert_to_skinny_bg_tree) {
+			ret = remove_block_group_item(trans, path, cache);
+			btrfs_release_path(path);
+			if (ret < 0 && ret != -ENOENT)
+				goto fail;
+
+			ret = insert_block_group_item(trans, cache);
+			btrfs_release_path(path);
+			/* New one is inserted, no need to update */
+			if (ret == 0)
+				return ret;
+			if (ret < 0 && ret != -EEXIST)
+				return ret;
+			/* ret == -EEXIST case falls through */
+		}
 		ret = locate_skinny_bg_item(fs_info, trans, cache, path, 0, 1);
 		if (ret < 0)
 			goto fail;
@@ -2932,6 +2952,24 @@ static int insert_block_group_item(struct btrfs_trans_handle *trans,
 	struct btrfs_key key;
 
 	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+		/*
+		 * For convert case, check if there is already one skinny bg
+		 * item, to prevent duplicating items.
+		 */
+		if (fs_info->convert_to_skinny_bg_tree) {
+			struct btrfs_path path;
+			int ret;
+
+			btrfs_init_path(&path);
+			ret = locate_skinny_bg_item(fs_info, NULL, block_group,
+						    &path, 0, 0);
+			btrfs_release_path(&path);
+			if (ret == 0)
+				return -EEXIST;
+			if (ret < 0 && ret != -ENOENT)
+				return ret;
+			/* -ENOENT (no existing item) case falls through */
+		}
 		key.objectid = block_group->start;
 		key.type = BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY;
 		key.offset = block_group->used;
@@ -3051,7 +3089,8 @@ static int remove_block_group_item(struct btrfs_trans_handle *trans,
 	struct btrfs_key key;
 	int ret = 0;
 
-	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE)) {
+	if (btrfs_fs_incompat(fs_info, SKINNY_BG_TREE) &&
+	    !fs_info->convert_to_skinny_bg_tree) {
 		key.objectid = block_group->start;
 		key.type = BTRFS_SKINNY_BLOCK_GROUP_ITEM_KEY;
 		key.offset = (u64)-1;
@@ -4032,4 +4071,60 @@ int btrfs_run_delayed_refs(struct btrfs_trans_handle *trans, unsigned long nr)
 	}
 
 	return 0;
+}
+
+int btrfs_convert_to_skinny_bg_tree(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_trans_handle *trans;
+	struct btrfs_block_group *bg;
+	struct btrfs_root *bg_root;
+	u64 features = btrfs_super_incompat_flags(fs_info->super_copy);
+	int ret;
+
+	ASSERT(fs_info->bg_root == NULL);
+
+	trans = btrfs_start_transaction(fs_info->tree_root, 1);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		errno = -ret;
+		error("failed to start transaction: %m");
+		return ret;
+	}
+
+	/* Create bg tree first */
+	bg_root = btrfs_create_tree(trans, fs_info,
+				    BTRFS_BLOCK_GROUP_TREE_OBJECTID);
+	if (IS_ERR(bg_root)) {
+		ret = PTR_ERR(bg_root);
+		errno = -ret;
+		error("failed to create bg tree: %m");
+		goto error;
+	}
+	fs_info->bg_root = bg_root;
+	fs_info->bg_root->track_dirty = 1;
+	fs_info->bg_root->ref_cows = 0;
+	add_root_to_dirty_list(bg_root);
+
+	/* Set SKINNY_BG_FEATURE and convert status */
+	btrfs_set_super_incompat_flags(fs_info->super_copy,
+			features | BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE);
+	fs_info->convert_to_skinny_bg_tree = 1;
+
+	/* Mark all bgs dirty so convert will happen at convert time */
+	for (bg = btrfs_lookup_first_block_group(fs_info, 0); bg;
+	     bg = btrfs_lookup_first_block_group(fs_info,
+		     bg->start + bg->length))
+		if (list_empty(&bg->dirty_list))
+			list_add_tail(&bg->dirty_list, &trans->dirty_bgs);
+
+	ret = btrfs_commit_transaction(trans, fs_info->tree_root);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to commit transaction: %m");
+		goto error;
+	}
+	return ret;
+error:
+	btrfs_abort_transaction(trans, ret);
+	return ret;
 }

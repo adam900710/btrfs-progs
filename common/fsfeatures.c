@@ -92,6 +92,12 @@ static const struct btrfs_fs_feature {
 		NULL, 0,
 		NULL, 0,
 		"RAID1 with 3 or 4 copies" },
+	{ "skinny-bg-tree", BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE,
+		"skinny_bg_tree",
+		VERSION_TO_STRING2(5, 9),
+		NULL, 0,
+		NULL, 0,
+		"store optimized block group items in dedicated tree" },
 	/* Keep this one last */
 	{ "list-all", BTRFS_FEATURE_LIST_ALL, NULL }
 };
