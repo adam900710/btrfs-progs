@@ -151,6 +151,8 @@ static u64 treeid_from_string(const char *str, const char **end)
 		{ "CHECKSUM", BTRFS_CSUM_TREE_OBJECTID },
 		{ "QUOTA", BTRFS_QUOTA_TREE_OBJECTID },
 		{ "UUID", BTRFS_UUID_TREE_OBJECTID },
+		{ "BG", BTRFS_BLOCK_GROUP_TREE_OBJECTID},
+		{ "BLOCK_GROUP", BTRFS_BLOCK_GROUP_TREE_OBJECTID},
 		{ "FREE_SPACE", BTRFS_FREE_SPACE_TREE_OBJECTID },
 		{ "TREE_LOG_FIXUP", BTRFS_TREE_LOG_FIXUP_OBJECTID },
 		{ "TREE_LOG", BTRFS_TREE_LOG_OBJECTID },
@@ -667,6 +669,10 @@ again:
 			case BTRFS_FREE_SPACE_TREE_OBJECTID:
 				if (!skip)
 					printf("free space");
+				break;
+			case BTRFS_BLOCK_GROUP_TREE_OBJECTID:
+				if (!skip)
+					printf("block group");
 				break;
 			case BTRFS_MULTIPLE_OBJECTIDS:
 				if (!skip) {
