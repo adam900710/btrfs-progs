@@ -227,6 +227,7 @@ commit_tree:
 	fs_info->running_transaction = NULL;
 	fs_info->last_trans_committed = transid;
 	fs_info->convert_to_skinny_bg_tree = 0;
+	fs_info->convert_to_extent_tree = 0;
 	list_for_each_entry(sinfo, &fs_info->space_info, list) {
 		if (sinfo->bytes_reserved) {
 			warning(

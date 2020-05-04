@@ -1206,6 +1206,7 @@ struct btrfs_fs_info {
 	unsigned int finalize_on_close:1;
 	unsigned int hide_names:1;
 	unsigned int convert_to_skinny_bg_tree:1;
+	unsigned int convert_to_extent_tree:1;
 
 	int transaction_aborted;
 
@@ -2621,6 +2622,7 @@ u64 add_new_free_space(struct btrfs_block_group *block_group,
 		       struct btrfs_fs_info *info, u64 start, u64 end);
 u64 hash_extent_data_ref(u64 root_objectid, u64 owner, u64 offset);
 int btrfs_convert_to_skinny_bg_tree(struct btrfs_fs_info *fs_info);
+int btrfs_convert_to_extent_tree(struct btrfs_fs_info *fs_info);
 
 /* ctree.c */
 int btrfs_comp_cpu_keys(const struct btrfs_key *k1, const struct btrfs_key *k2);

@@ -83,7 +83,11 @@ int btrfs_update_root(struct btrfs_trans_handle *trans, struct btrfs_root
 	ret = btrfs_search_slot(trans, root, key, path, 0, 1);
 	if (ret < 0)
 		goto out;
-	BUG_ON(ret != 0);
+	/* The root has been deleted */
+	if (ret > 0) {
+		ret = 0;
+		goto out;
+	}
 	l = path->nodes[0];
 	slot = path->slots[0];
 	ptr = btrfs_item_ptr_offset(l, slot);

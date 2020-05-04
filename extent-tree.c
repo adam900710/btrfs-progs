@@ -1597,6 +1597,14 @@ static int update_block_group_item(struct btrfs_trans_handle *trans,
 		btrfs_set_item_key_safe(fs_info->bg_root, path, &key);
 		return 0;
 	}
+	if (fs_info->convert_to_extent_tree) {
+		ret = insert_block_group_item(trans, cache);
+		if (ret == 0)
+			return ret;
+		if (ret < 0 && ret != -EEXIST)
+			goto fail;
+		/* -EEXIST case falls through */
+	}
 	key.objectid = cache->start;
 	key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
 	key.offset = cache->length;
@@ -4123,6 +4131,117 @@ int btrfs_convert_to_skinny_bg_tree(struct btrfs_fs_info *fs_info)
 		error("failed to commit transaction: %m");
 		goto error;
 	}
+	return ret;
+error:
+	btrfs_abort_transaction(trans, ret);
+	return ret;
+}
+
+static int clear_bg_tree(struct btrfs_trans_handle *trans)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_root *root = fs_info->bg_root;
+	struct btrfs_path path;
+	struct btrfs_key key;
+	int ret;
+	int nr;
+
+	btrfs_init_path(&path);
+	key.objectid = 0;
+	key.type = 0;
+	key.offset = 0;
+
+	while (1) {
+		ret = btrfs_search_slot(trans, root, &key, &path, -1, 1);
+		if (ret < 0)
+			goto out;
+		nr = btrfs_header_nritems(path.nodes[0]);
+		if (!nr)
+			break;
+		ret = btrfs_del_items(trans, root, &path, 0, nr);
+		if (ret < 0)
+			goto out;
+		btrfs_release_path(&path);
+	}
+	ret = 0;
+out:
+	btrfs_release_path(&path);
+	return ret;
+}
+
+int btrfs_convert_to_extent_tree(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_trans_handle *trans;
+	struct btrfs_root *bg_root = fs_info->bg_root;
+	struct btrfs_block_group *bg;
+	u64 features = btrfs_super_incompat_flags(fs_info->super_copy);
+	int ret;
+
+	if (bg_root == NULL) {
+		printf("The fs is not using skinny bg tree\n");
+		return 0;
+	}
+	trans = btrfs_start_transaction(fs_info->tree_root, 1);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		errno = -ret;
+		error("failed to start transaction: %m");
+		return ret;
+	}
+
+	/*
+	 * Empty bg tree, but not delete it yet, as btrfs-progs doesn't have 
+	 * good root deletion routine.
+	 */
+	ret = clear_bg_tree(trans);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to delete bg tree: %m");
+		goto error;
+	}
+	/* Clear SKINNY_BG_FEATURE and set convert status */
+	btrfs_set_super_incompat_flags(fs_info->super_copy,
+			features & ~BTRFS_FEATURE_INCOMPAT_SKINNY_BG_TREE);
+	fs_info->convert_to_extent_tree = 1;
+
+	/* Mark all bgs dirty so convert will happen at convert time */
+	for (bg = btrfs_lookup_first_block_group(fs_info, 0); bg;
+	     bg = btrfs_lookup_first_block_group(fs_info,
+		     bg->start + bg->length))
+		if (list_empty(&bg->dirty_list))
+			list_add_tail(&bg->dirty_list, &trans->dirty_bgs);
+
+	ret = btrfs_commit_transaction(trans, fs_info->tree_root);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to commit transaction: %m");
+		goto error;
+	}
+	trans = btrfs_start_transaction(fs_info->tree_root, 1);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		errno = -ret;
+		error("failed to start transaction: %m");
+		return ret;
+	}
+
+	/* Now cleanup the eb used by bg tree and delete it */
+	ret = btrfs_free_tree_block(trans, bg_root, bg_root->node, 0, 0);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to free bg tree root node: %m");
+		goto error;
+	}
+	free_extent_buffer(bg_root->node);
+	ret = btrfs_del_root(trans, fs_info->tree_root, &bg_root->root_key);
+	if (ret < 0) {
+		errno = -ret;
+		error("failed to delete bg root: %m");
+		goto error;
+	}
+	free(bg_root);
+	fs_info->bg_root = NULL;
+	ret = btrfs_commit_transaction(trans, fs_info->tree_root);
 	return ret;
 error:
 	btrfs_abort_transaction(trans, ret);

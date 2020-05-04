@@ -478,6 +478,7 @@ static void print_usage(void)
 	printf("\t-M UUID     change fsid in metadata_uuid to UUID\n");
 	printf("\t-b          enable skinny-bg-tree feature (mkfs: skinny-bg-tree)");
 	printf("\t            for faster mount time\n");
+	printf("\t-B          disable skinny-bg-tree feature");
 	printf("  general:\n");
 	printf("\t-f          allow dangerous operations, make sure that you are aware of the dangers\n");
 	printf("\t--help      print this help\n");
@@ -488,6 +489,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 	struct btrfs_root *root;
 	unsigned ctree_flags = OPEN_CTREE_WRITES;
 	bool to_skinny_bg_tree = false;
+	bool to_extent_tree = false;
 	int success = 0;
 	int total = 0;
 	int seeding_flag = 0;
@@ -504,7 +506,7 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 			{ "help", no_argument, NULL, GETOPT_VAL_HELP},
 			{ NULL, 0, NULL, 0 }
 		};
-		int c = getopt_long(argc, argv, "S:rxfuU:nmM:b", long_options,
+		int c = getopt_long(argc, argv, "S:rxfuU:nmM:bB", long_options,
 				    NULL);
 
 		if (c < 0)
@@ -546,6 +548,9 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		case 'b':
 			to_skinny_bg_tree = true;
 			break;
+		case 'B':
+			to_extent_tree = true;
+			break;
 		case GETOPT_VAL_HELP:
 		default:
 			print_usage();
@@ -563,9 +568,13 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		return 1;
 	}
 	if (!super_flags && !seeding_flag && !(random_fsid || new_fsid_str) &&
-	    !change_metadata_uuid && !to_skinny_bg_tree) {
+	    !change_metadata_uuid && !to_skinny_bg_tree && !to_extent_tree) {
 		error("at least one option should be specified");
 		print_usage();
+		return 1;
+	}
+	if (to_extent_tree && to_skinny_bg_tree) {
+		error("'-b' and '-B' conflict with each other");
 		return 1;
 	}
 
@@ -614,6 +623,14 @@ int BOX_MAIN(btrfstune)(int argc, char *argv[])
 		if (ret < 0) {
 			errno = -ret;
 			error("failed to convert to bg-tree feature: %m");
+			goto out;
+		}
+	}
+	if (to_extent_tree) {
+		ret = btrfs_convert_to_extent_tree(root->fs_info);
+		if (ret < 0) {
+			errno = -ret;
+			error("failed to disable bg-tree feature: %m");
 			goto out;
 		}
 	}

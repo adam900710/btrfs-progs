@@ -32,6 +32,10 @@ OPTIONS
 enable skinny-bg-tree feature (faster mount time for large fs), enabled by mkfs
 feature 'skinny-bg-tree'.
 
+-B::
++
+disable skinny-bg-tree feature.
+
 -f::
 Allow dangerous changes, e.g. clear the seeding flag or change fsid. Make sure
 that you are aware of the dangers.
