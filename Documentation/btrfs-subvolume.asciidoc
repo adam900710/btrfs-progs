@@ -222,6 +222,12 @@ Make the new snapshot read only.
 -i <qgroupid>::::
 Add the newly created subvolume to a qgroup. This option can be given multiple
 times.
++
+WARNING: This parameter can make qgroup inconsistent, and due to the 
+limitation of snapshot creation ioctl, there is no way to inform user space
+that qgroup is inconsistent due to this operation.
+Please use 'btrfs qgroup assign' instead.
+
 
 *sync* <path> [subvolid...]::
 Wait until given subvolume(s) are completely removed from the filesystem after
