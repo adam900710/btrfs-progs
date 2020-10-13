@@ -17,6 +17,7 @@
 #include "kerncompat.h"
 #include <sys/utsname.h>
 #include <linux/version.h>
+#include <unistd.h>
 #include "common/fsfeatures.h"
 #include "kernel-shared/ctree.h"
 #include "common/utils.h"
@@ -325,6 +326,26 @@ u32 get_running_kernel_version(void)
 		version |= atoi(tmp);
 
 	return version;
+}
+int btrfs_check_sectorsize(u32 sectorsize)
+{
+	u32 page_size = (u32)sysconf(_SC_PAGESIZE);
+
+	if (!is_power_of_2(sectorsize)) {
+		error("illegal sectorsize %u, expect value power of 2",
+		      sectorsize);
+		return -EUCLEAN;
+	}
+	if (sectorsize < SZ_4K || sectorsize > SZ_64K) {
+		error("illegal sectorsize %u, expect range [4K, 64K]",
+		      sectorsize);
+		return -EUCLEAN;
+	}
+	if (page_size != sectorsize)
+		warning(
+"the fs may not be mountable, sectorsize %u doesn't match page size %u",
+			sectorsize, page_size);
+	return 0;
 }
 
 int btrfs_check_nodesize(u32 nodesize, u32 sectorsize, u64 features)
