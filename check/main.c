@@ -621,6 +621,8 @@ static void print_inode_error(struct btrfs_root *root, struct inode_record *rec)
 			rec->imode & ~07777);
 	if (errors & I_ERR_INVALID_GEN)
 		fprintf(stderr, ", invalid inode generation or transid");
+	if (errors & I_ERR_MIXED_EXTENTS)
+		fprintf(stderr, ", mixed regular and inline extents");
 	fprintf(stderr, "\n");
 
 	/* Print the holes if needed */
@@ -1583,6 +1585,7 @@ static int process_file_extent(struct btrfs_root *root,
 	if (extent_type == BTRFS_FILE_EXTENT_INLINE) {
 		struct btrfs_item *item = btrfs_item_nr(slot);
 
+		rec->found_inline_extent = 1;
 		num_bytes = btrfs_file_extent_ram_bytes(eb, fi);
 		if (num_bytes == 0)
 			rec->errors |= I_ERR_BAD_FILE_EXTENT;
@@ -1602,6 +1605,8 @@ static int process_file_extent(struct btrfs_root *root,
 		num_bytes = (num_bytes + mask) & ~mask;
 	} else if (extent_type == BTRFS_FILE_EXTENT_REG ||
 		   extent_type == BTRFS_FILE_EXTENT_PREALLOC) {
+		if (rec->found_inline_extent)
+			rec->errors |= I_ERR_MIXED_EXTENTS;
 		num_bytes = btrfs_file_extent_num_bytes(eb, fi);
 		disk_bytenr = btrfs_file_extent_disk_bytenr(eb, fi);
 		extent_offset = btrfs_file_extent_offset(eb, fi);

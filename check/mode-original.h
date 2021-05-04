@@ -186,6 +186,7 @@ struct unaligned_extent_rec_t {
 #define I_ERR_MISMATCH_DIR_HASH		(1 << 18)
 #define I_ERR_INVALID_IMODE		(1 << 19)
 #define I_ERR_INVALID_GEN		(1 << 20)
+#define I_ERR_MIXED_EXTENTS		(1 << 21)
 
 struct inode_record {
 	struct list_head backrefs;
@@ -197,6 +198,7 @@ struct inode_record {
 	unsigned int found_csum_item:1;
 	unsigned int some_csum_missing:1;
 	unsigned int nodatasum:1;
+	unsigned int found_inline_extent:1;
 	int errors;
 
 	struct list_head unaligned_extent_recs;
