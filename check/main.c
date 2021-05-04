@@ -578,7 +578,7 @@ static void print_inode_error(struct btrfs_root *root, struct inode_record *rec)
 		root_objectid = root->root_key.offset;
 		fprintf(stderr, "reloc");
 	}
-	fprintf(stderr, "root %llu inode %llu errors %x",
+	fprintf(stderr, "root %llu inode %llu errors 0x%x",
 		(unsigned long long) root_objectid,
 		(unsigned long long) rec->ino, rec->errors);
 
