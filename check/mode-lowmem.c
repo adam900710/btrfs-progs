@@ -2003,7 +2003,12 @@ static int check_file_extent_inline(struct btrfs_root *root,
 			}
 		}
 	}
-	*end += extent_num_bytes;
+	/*
+	 * For inline extent, we expect no more extents. But if there are
+	 * regular extents after inlined extent, they should start at
+	 * sectorsize, not the inline size.
+	 */
+	*end += root->fs_info->sectorsize;
 	*size += extent_num_bytes;
 
 	return err;
@@ -2022,7 +2027,7 @@ static int check_file_extent_inline(struct btrfs_root *root,
  */
 static int check_file_extent(struct btrfs_root *root, struct btrfs_path *path,
 			     unsigned int nodatasum, u64 isize, u64 *size,
-			     u64 *end)
+			     u64 *end, bool *found_inline)
 {
 	struct btrfs_file_extent_item *fi;
 	struct btrfs_key fkey;
@@ -2058,9 +2063,25 @@ static int check_file_extent(struct btrfs_root *root, struct btrfs_path *path,
 	}
 
 	/* Check inline extent */
-	if (extent_type == BTRFS_FILE_EXTENT_INLINE)
+	if (extent_type == BTRFS_FILE_EXTENT_INLINE) {
+		*found_inline = true;
 		return check_file_extent_inline(root, path, size, end);
+	}
 
+	/*
+	 * Here we hit a regular/prealloc file extent, if this inode already
+	 * has an inline extent, we have mixed inline and regular extents.
+	 */
+	if (*found_inline) {
+		err |= FILE_EXTENT_ERROR;
+		error(
+		"root %llu inode %llu has mixed inline and regular extents",
+		      root->objectid, fkey.objectid);
+		/*
+		 * We still want to continue checking, as mixed inline and
+		 * regular is just a minor problem.
+		 */
+	}
 	/* Check REG_EXTENT/PREALLOC_EXTENT */
 	gen = btrfs_file_extent_generation(node, fi);
 	disk_bytenr = btrfs_file_extent_disk_bytenr(node, fi);
@@ -2606,6 +2627,7 @@ static int check_inode_item(struct btrfs_root *root, struct btrfs_path *path)
 	int slot;
 	int ret;
 	int err = 0;
+	bool found_inline = false;
 	char namebuf[BTRFS_NAME_LEN] = {0};
 	u32 name_len = 0;
 
@@ -2726,7 +2748,8 @@ static int check_inode_item(struct btrfs_root *root, struct btrfs_path *path)
 					key.offset);
 			}
 			ret = check_file_extent(root, path, nodatasum, isize,
-						&extent_size, &extent_end);
+						&extent_size, &extent_end,
+						&found_inline);
 			err |= ret;
 			break;
 		case BTRFS_XATTR_ITEM_KEY:
