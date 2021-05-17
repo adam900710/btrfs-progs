@@ -1177,8 +1177,6 @@ int BOX_MAIN(mkfs)(int argc, char **argv)
 			data_profile = tmp;
 		}
 	} else {
-		u32 best_nodesize = max_t(u32, sysconf(_SC_PAGESIZE), sectorsize);
-
 		if (metadata_profile_opt || data_profile_opt) {
 			if (metadata_profile != data_profile) {
 				error(
@@ -1188,7 +1186,7 @@ int BOX_MAIN(mkfs)(int argc, char **argv)
 		}
 
 		if (!nodesize_forced)
-			nodesize = best_nodesize;
+			nodesize = sectorsize;
 	}
 
 	/*
