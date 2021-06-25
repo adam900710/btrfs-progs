@@ -1125,6 +1125,70 @@ static struct btrfs_root *open_root(struct btrfs_fs_info *fs_info,
 
 	return root;
 }
+
+static int mark_roots_orphan(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_root *root = fs_info->tree_root;
+	struct btrfs_path path;
+	struct btrfs_key key;
+	struct btrfs_trans_handle *trans;
+	int i;
+	u64 orphan_roots[4] = { 0 };
+	int found = 0;
+	int ret;
+
+	btrfs_init_path(&path);
+	key.objectid = BTRFS_FIRST_FREE_OBJECTID;
+	key.type = BTRFS_ROOT_ITEM_KEY;
+	key.offset = 0;
+
+	ret = btrfs_search_slot(NULL, root, &key, &path, 0, 0);
+	ASSERT(ret >= 0);
+
+	while (found < 4) {
+		struct btrfs_key found_key;
+		struct btrfs_root_item *ri;
+
+		btrfs_item_key_to_cpu(path.nodes[0], &found_key, path.slots[0]);
+		if (found_key.objectid >= BTRFS_LAST_FREE_OBJECTID)
+			break;
+		if (found_key.type != BTRFS_ROOT_ITEM_KEY)
+			goto next;
+
+		ri = btrfs_item_ptr(path.nodes[0], path.slots[0],
+				    struct btrfs_root_item);
+		if (btrfs_disk_root_refs(path.nodes[0], ri) == 0) {
+			printf("Root %llu is a ghost\n", found_key.objectid);
+			orphan_roots[found] = found_key.objectid;
+			found++;
+		}
+next:
+		ret = btrfs_next_item(root, &path);
+		ASSERT(ret >= 0);
+		if (ret > 0) {
+			ret = 0;
+			break;
+		}
+	}
+	trans = btrfs_start_transaction(root, 1);
+	ASSERT(trans);
+
+	for (i = 0; i < found; i++) {
+		key.objectid = BTRFS_ORPHAN_OBJECTID;
+		key.type = BTRFS_ORPHAN_ITEM_KEY;
+		key.offset = orphan_roots[i];
+		btrfs_release_path(&path);
+		ret = btrfs_insert_empty_item(trans, root, &path, &key, 0);
+		ASSERT(ret == 0);
+		printf("Inserted orhpan item for root %llu\n", orphan_roots[i]);
+		btrfs_release_path(&path);
+	}
+	ret = btrfs_commit_transaction(trans, root);
+	ASSERT(ret == 0);
+	printf("Please mount the fs and kernel will try to delete above roots\n");
+	return ret;
+}
+
 int main(int argc, char **argv)
 {
 	struct cache_tree root_cache;
@@ -1150,6 +1214,7 @@ int main(int argc, char **argv)
 	u64 file_extent = (u64)-1;
 	u64 root_objectid = 0;
 	u64 csum_bytenr = 0;
+	bool do_special = false;
 	char field[FIELD_BUF_LEN];
 
 	field[0] = '\0';
@@ -1181,7 +1246,7 @@ int main(int argc, char **argv)
 			{ NULL, 0, NULL, 0 }
 		};
 
-		c = getopt_long(argc, argv, "l:c:b:eEkuUi:f:x:m:K:I:D:d:r:C:",
+		c = getopt_long(argc, argv, "l:c:b:eEkuUi:f:x:m:K:I:D:d:r:C:X",
 				long_options, NULL);
 		if (c < 0)
 			break;
@@ -1244,6 +1309,9 @@ int main(int argc, char **argv)
 			case 'C':
 				csum_bytenr = arg_strtou64(optarg);
 				break;
+			case 'X':
+				do_special = true;
+				break;
 			case GETOPT_VAL_HELP:
 			default:
 				print_usage(c != GETOPT_VAL_HELP);
@@ -1261,6 +1329,10 @@ int main(int argc, char **argv)
 	if (!root) {
 		fprintf(stderr, "Open ctree failed\n");
 		exit(1);
+	}
+	if (do_special) {
+		ret = mark_roots_orphan(root->fs_info);
+		goto out_close;
 	}
 	target_root = root;
 	if (root_objectid)
