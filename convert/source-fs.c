@@ -24,6 +24,7 @@
 #include "kernel-shared/disk-io.h"
 #include "kernel-shared/volumes.h"
 #include "kernel-shared/transaction.h"
+#include "kernel-shared/print-tree.h"
 #include "common/utils.h"
 #include "common/internal.h"
 #include "common/messages.h"
@@ -304,7 +305,14 @@ int record_file_blocks(struct blk_iterate_data *data,
 		fi = btrfs_item_ptr(node, slot, struct btrfs_file_extent_item);
 		extent_disk_bytenr = btrfs_file_extent_disk_bytenr(node, fi);
 		extent_num_bytes = btrfs_file_extent_num_bytes(node, fi);
-		BUG_ON(cur_off - key.offset >= extent_num_bytes);
+		if (unlikely(cur_off - key.offset >= extent_num_bytes)) {
+			error("%s: r/i=%lld/%llu fileoff=%llu disk=%llu num_blocks=%llu cur_off=%llu cur_key=(%llu %u %llu) slot=%d",
+				__func__, btrfs_root_id(root), data->convert_ino,
+				file_block * sectorsize, old_disk_bytenr, num_blocks,
+				cur_off, key.objectid, key.type, key.offset, slot);
+			btrfs_print_leaf(node);
+			BUG_ON(1);
+		}
 		btrfs_release_path(&path);
 
 		if (extent_disk_bytenr)
