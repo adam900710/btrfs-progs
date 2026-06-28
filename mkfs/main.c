@@ -1534,6 +1534,7 @@ int BOX_MAIN(mkfs)(int argc, char **argv)
 	bool nodesize_forced = false;
 	u32 sectorsize = 0;
 	u32 stripesize = 4096;
+	u32 data_size = 0;
 	u64 metadata_profile = 0;
 	bool metadata_profile_set = false;
 	u64 data_profile = 0;
@@ -1600,6 +1601,7 @@ int BOX_MAIN(mkfs)(int argc, char **argv)
 #if EXPERIMENTAL
 			{ "param", required_argument, NULL, GETOPT_VAL_PARAM },
 			{ "num-global-roots", required_argument, NULL, GETOPT_VAL_GLOBAL_ROOTS },
+			{ "data-size", required_argument, NULL, GETOPT_VAL_DATA_SIZE },
 #endif
 			{ "help", no_argument, NULL, GETOPT_VAL_HELP },
 			{ NULL, 0, NULL, 0}
@@ -1773,6 +1775,9 @@ int BOX_MAIN(mkfs)(int argc, char **argv)
 				break;
 			case GETOPT_VAL_REFLINK:
 				do_reflink = true;
+				break;
+			case GETOPT_VAL_DATA_SIZE:
+				data_size = arg_strtou64_with_suffix(optarg);
 				break;
 			case GETOPT_VAL_HELP:
 			default:
@@ -2015,6 +2020,25 @@ int BOX_MAIN(mkfs)(int argc, char **argv)
 	     !(features.compat_ro_flags & BTRFS_FEATURE_COMPAT_RO_FREE_SPACE_TREE))) {
 		warning("disabling block-group-tree feature due to missing no-holes and free-space-tree features");
 		features.compat_ro_flags &= ~BTRFS_FEATURE_COMPAT_RO_BLOCK_GROUP_TREE;
+	}
+
+	if (data_size) {
+		if (source_dir) {
+			error("the option --data-size and -r are incompatible for now");
+			exit(1);
+		}
+		if (features.incompat_flags & BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS) {
+			error("cannot enable mixed-bg with datasize");
+			exit(1);
+		}
+		if (!is_power_of_2(data_size) || data_size <= sectorsize ||
+		    data_size > BTRFS_MAX_METADATA_BLOCKSIZE) {
+			error("data size invalid, has %u expect power of 2 in range [%u, %u]",
+			      data_size, sectorsize, BTRFS_MAX_METADATA_BLOCKSIZE);
+			exit(1);
+		}
+		mkfs_cfg.data_size = data_size;
+		features.incompat_flags |= BTRFS_FEATURE_INCOMPAT_RAID56_VSL;
 	}
 
 	if (opt_zoned) {
@@ -2553,6 +2577,8 @@ raid_groups:
 		printf("Node size:          %u\n", nodesize);
 		printf("Sector size:        %u\t(CPU page size: %lu)\n",
 		       sectorsize, sysconf(_SC_PAGESIZE));
+		if (data_size)
+			printf("Data size:          %u\n", data_size);
 		printf("Filesystem size:    %s\n",
 			pretty_size(btrfs_super_total_bytes(fs_info->super_copy)));
 		printf("Block group profiles:\n");

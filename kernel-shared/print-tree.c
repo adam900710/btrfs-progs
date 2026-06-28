@@ -1965,6 +1965,7 @@ static struct readable_flag_entry incompat_flags_array[] = {
 	DEF_INCOMPAT_FLAG_ENTRY(RAID_STRIPE_TREE),
 	DEF_INCOMPAT_FLAG_ENTRY(SIMPLE_QUOTA),
 	DEF_INCOMPAT_FLAG_ENTRY(REMAP_TREE),
+	DEF_INCOMPAT_FLAG_ENTRY(RAID56_VSL),
 };
 static const int incompat_flags_num = ARRAY_SIZE(incompat_flags_array);
 

@@ -79,6 +79,7 @@ struct btrfs_mkfs_config {
 	u32 sectorsize;
 	u32 stripesize;
 	u32 leaf_data_size;
+	u32 data_size;
 	struct btrfs_mkfs_features features;
 	/* Size of the filesystem in bytes */
 	u64 num_bytes;
