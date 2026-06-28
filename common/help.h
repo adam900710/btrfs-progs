@@ -38,6 +38,7 @@ struct cmd_group;
 #define GETOPT_VAL_HELP				520
 #define GETOPT_VAL_PARAM			521
 #define GETOPT_VAL_DRY_RUN			522
+#define GETOPT_VAL_DATA_IO_SIZE			523
 
 #define ARGV0_BUF_SIZE	PATH_MAX
 

@@ -338,6 +338,13 @@ _static_assert(sizeof(struct btrfs_ioctl_fs_info_args) == 1024);
  */
 #define BTRFS_FEATURE_COMPAT_RO_BLOCK_GROUP_TREE	(1ULL << 3)
 
+/*
+ * Force all IOs (including buffered, direct, compressed) to be aligned
+ * to btrfs_super_block::data_size other than sectorsize.
+ * Meanwhile still data checksum to be calculated based on sectorsize.
+ */
+#define BTRFS_FEATURE_COMPAT_RO_DATA_SIZE		(1ULL << 4)
+
 #define BTRFS_FEATURE_INCOMPAT_MIXED_BACKREF	(1ULL << 0)
 #define BTRFS_FEATURE_INCOMPAT_DEFAULT_SUBVOL	(1ULL << 1)
 #define BTRFS_FEATURE_INCOMPAT_MIXED_GROUPS	(1ULL << 2)

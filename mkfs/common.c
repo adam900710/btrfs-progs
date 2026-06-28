@@ -494,6 +494,8 @@ int make_btrfs(int fd, struct btrfs_mkfs_config *cfg)
 	if (free_space_tree)
 		btrfs_set_super_cache_generation(&super, 0);
 	btrfs_set_super_compat_ro_flags(&super, cfg->features.compat_ro_flags);
+	if (cfg->data_size)
+		btrfs_set_super_data_size(&super, cfg->data_size);
 
 	if (extent_tree_v2)
 		btrfs_set_super_nr_global_roots(&super, 1);
